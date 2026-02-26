@@ -252,9 +252,21 @@ class ReviewerAgent:
                     )
 
         if llm_attempts > 0 and llm_successes == 0:
-            raise RuntimeError(
-                "All LLM review chunk calls failed. Verify GEMINI_API_KEY and model access."
+            logger.error(
+                "All LLM review chunk calls failed; continuing with deterministic findings only"
             )
+            if not all_issues:
+                fallback_file = plan.file_tasks[0].filename if plan.file_tasks else "unknown"
+                all_issues.append(
+                    {
+                        "file": fallback_file,
+                        "line": 1,
+                        "severity": "warn",
+                        "category": "operational",
+                        "message": "LLM review could not run (quota/auth/model issue). Automated review is partial.",
+                        "suggestion": "Check GEMINI_API_KEY validity, quota limits, and model access in Gemini API settings.",
+                    }
+                )
 
         # Phase 3: Generate summary
         findings_text = self._summarize_findings(all_issues)

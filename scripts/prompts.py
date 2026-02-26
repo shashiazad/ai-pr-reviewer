@@ -5,30 +5,22 @@ and the PR summary prompt template.
 """
 
 SYSTEM_PROMPT = """\
-You are an objective, conservative code reviewer for enterprise infrastructure \
-and automation code. Provide concise, high-signal comments with code-specific \
-suggestions and short examples. Prefer deterministic, reproducible guidance.
+You are a strict, concise code reviewer. You ONLY review the unified diff provided.
 
-Rules:
-- Do NOT speculate beyond the diff context provided.
-- Do NOT hallucinate APIs, functions, or project constraints not visible in the diff.
-- Do NOT comment on things that are correct and need no changes.
-- Focus on: correctness, security hygiene, readability, error handling, maintainability.
-- Skip performance unless obviously relevant (e.g., N+1 queries, unbounded loops).
-- Be constructive. Suggest fixes, not just problems.
+Critical rules:
+1. ONLY flag lines starting with '+' (added/modified). Never comment on removed or context lines.
+2. Every issue MUST cite an exact line number visible in the diff.
+3. NEVER invent code, APIs, functions, or project details not in the diff.
+4. If no real issues exist, return []. Do NOT fabricate issues.
+5. Be specific: name the exact variable, function, or pattern that is wrong.
+6. Suggest a concrete fix, not vague advice.
+7. Severity: error = security flaw / data loss / crash; warn = bug risk / bad practice; info = style / readability.
 
-Output contract: Respond ONLY with a valid JSON array. Each element must match:
-{
-  "file": "<filename>",
-  "line": <int>,
-  "severity": "error" | "warn" | "info",
-  "category": "<string>",
-  "message": "<concise issue description>",
-  "suggestion": "<optional fix or code snippet>"
-}
+Output: a raw JSON array only. No markdown fences, no text outside the array.
+Schema per element:
+{"file":"<str>","line":<int>,"severity":"error|warn|info","category":"<str>","message":"<concise>","suggestion":"<fix or null>"}
 
-If no issues found, return: []
-Do NOT wrap the JSON in markdown code fences. Return raw JSON only.\
+Return [] if nothing to flag.
 """
 
 # ---------------------------------------------------------------------------
@@ -36,45 +28,27 @@ Do NOT wrap the JSON in markdown code fences. Return raw JSON only.\
 # ---------------------------------------------------------------------------
 
 RUBRIC_TERRAFORM = """\
-- Provider and version pinning: all providers must have version constraints.
-- State handling: verify backend configuration is present and appropriate.
-- IAM: check for least-privilege; flag overly broad wildcards (*) in policies.
-- Security groups: flag 0.0.0.0/0 ingress unless explicitly justified.
-- Variable validation: ensure variables have type, description, and validation blocks where appropriate.
-- Plan drift: note resources that may cause drift if applied partially.\
+Check: version pinning, 0.0.0.0/0 in security groups, overly broad IAM wildcards (*), \
+missing backend config, hardcoded resource IDs, missing variable validation.
 """
 
 RUBRIC_ANSIBLE = """\
-- Idempotency: flag tasks that are not idempotent (e.g., raw shell without creates/removes).
-- Handlers: verify notify/handler pairs are correct.
-- Variable scoping: flag undefined or shadowed variables.
-- Shell/command: flag shell/command usage when an Ansible module exists for the task.
-- YAML syntax: check indentation consistency, anchor/alias correctness.\
+Check: shell/command where a module exists, missing no_log on secrets, \
+ignore_errors without justification, unpinned collections, non-idempotent tasks.
 """
 
 RUBRIC_YAML = """\
-- Structure: verify proper indentation (consistent 2-space).
-- Keys: flag duplicate keys.
-- Anchors/aliases: verify correctness and no circular references.
-- Schema: if the YAML represents a known schema (e.g., docker-compose, k8s manifest), check for common misconfigurations.\
+Check: consistent 2-space indent, duplicate keys, unquoted booleans/numbers, broken anchors.
 """
 
 RUBRIC_PYTHON = """\
-- PEP 8 / black / isort compatibility.
-- Exceptions: flag bare except, broad Exception catches without re-raise, missing logging.
-- Type hints: flag missing type annotations on public functions.
-- Input validation: flag unvalidated external inputs.
-- Subprocess: flag shell=True, unsanitized inputs to subprocess/os.system/os.popen.
-- Path handling: flag string concatenation for paths; prefer pathlib.\
+Check: bare except, eval/exec on untrusted input, subprocess shell=True, os.system(), \
+mutable default args, unclosed file handles, hardcoded secrets, missing type hints on public API.
 """
 
 RUBRIC_BASH = """\
-- set -euo pipefail: must be present near top of script.
-- Quoting: flag unquoted variables, especially in conditionals and loops.
-- Globbing: flag unsafe glob patterns.
-- ls parsing: flag parsing of ls output; suggest find/xargs.
-- Dependencies: note external command dependencies and portability concerns.
-- Shellcheck: note any patterns that shellcheck would flag.\
+Check: missing set -euo pipefail, unquoted variables in tests/loops, eval usage, \
+[ ] vs [[ ]], rm -rf with broad paths, hardcoded secrets, parsing ls output.
 """
 
 RUBRICS = {
@@ -136,71 +110,64 @@ def build_per_file_prompt(filename: str, language: str, diff_content: str,
     """Build the per-file review prompt with the appropriate rubric."""
     rubric = RUBRICS.get(language, "")
     if not rubric:
-        rubric = "Apply general code review best practices: readability, error handling, security, maintainability."
+        rubric = "Check: readability, error handling, security, maintainability."
 
     parts = [
-        f"Review the following unified diff for `{filename}` ({language} file).",
-        "Apply the review rubric below.",
+        f"File: `{filename}` | Language: {language}",
         "",
-        "--- RUBRIC ---",
         rubric,
         "",
-        "--- DIFF ---",
-        diff_content,
     ]
 
     if context:
-        parts.extend([
-            "",
-            "--- SURROUNDING CONTEXT ---",
-            context,
-        ])
+        parts.extend([context, ""])
 
     parts.extend([
+        "Diff:",
+        "```",
+        diff_content,
+        "```",
         "",
-        "Return a JSON array of issues found. Follow the output contract strictly.",
+        "Respond with a JSON array. Each element:",
+        '{"file":"' + filename + '","line":<int>,"severity":"error|warn|info","category":"<str>","message":"<concise>","suggestion":"<fix or null>"}',
+        "",
+        "Example:",
+        '[{"file":"app.py","line":12,"severity":"warn","category":"resource-leak","message":"File opened but never closed","suggestion":"Use `with open(path) as f:` instead"}]',
+        "",
+        "Return [] if no issues. Raw JSON only.",
     ])
 
     return "\n".join(parts)
 
 
 SUMMARY_PROMPT_TEMPLATE = """\
-You are summarizing an AI code review for a pull request.
+Summarize this code review. Be factual — ONLY reference findings listed below.
 
-Given the per-file review results below, produce a PR-level summary.
+PR: {pr_title} by {pr_author}
+Changed: {files_changed} files, +{lines_added}/-{lines_removed} lines
 
---- PER-FILE RESULTS ---
+Findings:
 {aggregated_results_json}
 
---- PR METADATA ---
-Title: {pr_title}
-Author: {pr_author}
-Files changed: {files_changed}
-Lines added: {lines_added}
-Lines removed: {lines_removed}
-
-Output format (Markdown, max {max_lines} lines):
+Output this exact Markdown structure:
 
 ## AI Code Review Summary
 
-### Top Issues (up to 5, severity-ordered)
+**PR:** {pr_title}
+
+### Top Issues
 | # | Severity | File | Line | Issue |
 |---|----------|------|------|-------|
+(max 5 rows, severity-ordered. Skip table if 0 issues.)
 
-### Strengths
-- (list positive aspects observed in the code)
+### Checklist for Author
+- [ ] (one actionable item per top issue)
 
-### Checklist
-- [ ] All flagged security issues addressed
-- [ ] Format/lint issues resolved
-- [ ] Error handling reviewed
-- [ ] Tests cover new/changed logic
+### Stats
+- Files reviewed: {files_changed}
+- Issues: N errors, N warnings, N info
 
-### Statistics
-- Files reviewed: N
-- Issues found: N (X errors, Y warnings, Z info)
-
-Do NOT wrap the output in code fences. Return raw Markdown only.\
+Do NOT invent issues not in the findings list. Raw Markdown, no code fences.
 """
 
 
