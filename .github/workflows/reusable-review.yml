@@ -1,6 +1,4 @@
 # .github/workflows/reusable-review.yml
-name: Reusable AI Code Review
-
 on:
   workflow_call:
     inputs:
@@ -17,49 +15,26 @@ on:
         type: string
         default: "info"
     secrets:
-      github_token:
+      token:                    # ← FIXED: was "github_token"
         required: true
       client_id:
         required: false
       client_secret:
         required: false
 
-permissions:
-  contents: read
-  pull-requests: write
-  id-token: write
+# ... rest of the file ...
 
 jobs:
-  ai-review:
+  review:
     name: AI Code Review (Agentic)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Checkout caller repo
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Checkout AI Reviewer tool
-        uses: actions/checkout@v4
-        with:
-          repository: shashi-azad/ai-code-reviewer
-          path: .ai-reviewer-tool
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: |
-          pip install --quiet \
-            -r .ai-reviewer-tool/scripts/requirements.txt \
-            -r .ai-reviewer-tool/model/requirements.txt
+      # ... steps ...
 
       - name: Run Agentic AI Review
         env:
-          GITHUB_TOKEN: ${{ secrets.github_token }}
+          GITHUB_TOKEN: ${{ secrets.token }}    # ← FIXED: was secrets.github_token
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           AI_REVIEW_MAX_COMMENTS: ${{ inputs.max_comments }}
