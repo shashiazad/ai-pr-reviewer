@@ -1,4 +1,6 @@
 # .github/workflows/reusable-review.yml
+name: Reusable AI Code Review
+
 on:
   workflow_call:
     inputs:
@@ -15,14 +17,17 @@ on:
         type: string
         default: "info"
     secrets:
-      token:                    # ← FIXED: was "github_token"
+      token:
         required: true
       client_id:
         required: false
       client_secret:
         required: false
 
-# ... rest of the file ...
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write
 
 jobs:
   review:
@@ -30,11 +35,31 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # ... steps ...
+      - name: Checkout caller repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Checkout AI Reviewer tool
+        uses: actions/checkout@v4
+        with:
+          repository: shashiazad/ai-pr-reviewer
+          path: .ai-reviewer-tool
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --quiet \
+            -r .ai-reviewer-tool/scripts/requirements.txt \
+            -r .ai-reviewer-tool/model/requirements.txt
 
       - name: Run Agentic AI Review
         env:
-          GITHUB_TOKEN: ${{ secrets.token }}    # ← FIXED: was secrets.github_token
+          GITHUB_TOKEN: ${{ secrets.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           AI_REVIEW_MAX_COMMENTS: ${{ inputs.max_comments }}
@@ -42,9 +67,10 @@ jobs:
           AI_REVIEW_DRY_RUN: ${{ inputs.dry_run }}
           PYTHONPATH: .ai-reviewer-tool
         run: |
-          python .ai-pr-reviewer/runner.py \
+          cd .ai-reviewer-tool
+          python runner.py \
             --repo "$GITHUB_REPOSITORY" \
             --pr "$PR_NUMBER" \
             --config .ai-reviewer.json \
-            --policy .ai-pr-reviewer/configs/agent_policy.json \
-            --templates .ai-pr-reviewer/policies/prompt_templates.json
+            --policy configs/agent_policy.json \
+            --templates policies/prompt_templates.json
