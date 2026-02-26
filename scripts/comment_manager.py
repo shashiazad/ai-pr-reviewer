@@ -17,6 +17,7 @@ logger = logging.getLogger("ai-reviewer.comments")
 
 SUMMARY_MARKER = "<!-- ai-reviewer-summary -->"
 SEVERITY_ORDER = {"error": 0, "warn": 1, "info": 2}
+BOT_NAME = "🤖 AI Code Reviewer"
 
 
 # ---------------------------------------------------------------------------
@@ -153,8 +154,14 @@ class CommentManager:
                     "body": body,
                 })
 
+        # Determine review event: REQUEST_CHANGES if error/warn, else COMMENT
+        has_blocking = any(
+            i.get("severity") in ("error", "warn") for i in issues
+        )
+        review_event = "REQUEST_CHANGES" if has_blocking else "APPROVE" if not issues else "COMMENT"
+
         # Post as a single review with all comments
-        self._submit_review(comments, summary_markdown)
+        self._submit_review(comments, summary_markdown, review_event)
 
     def _resolve_position(
         self,
@@ -187,14 +194,15 @@ class CommentManager:
         self,
         comments: List[Dict[str, Any]],
         summary_markdown: str,
+        event: str = "COMMENT",
     ) -> None:
         """Submit a PR review with inline comments and summary body."""
         # Update or create the summary
-        body = f"{SUMMARY_MARKER}\n{summary_markdown}"
+        body = f"{SUMMARY_MARKER}\n\n**{BOT_NAME}**\n\n{summary_markdown}"
 
         payload: Dict[str, Any] = {
             "body": body,
-            "event": "COMMENT",
+            "event": event,
             "comments": comments,
         }
 
@@ -219,7 +227,7 @@ class CommentManager:
                 # Post new inline comments via a new review if any
                 if comments:
                     new_review = {
-                        "event": "COMMENT",
+                        "event": event,
                         "comments": comments,
                     }
                     if self.cfg.head_sha:
@@ -279,19 +287,22 @@ class CommentManager:
 
     def _format_inline_comment(self, issue: Dict[str, Any]) -> str:
         """Format a single issue into a GitHub review comment body."""
-        severity_emoji = {"error": "🔴", "warn": "🟡", "info": "🔵"}.get(
-            issue.get("severity", "info"), "🔵"
-        )
+        severity = issue.get("severity", "info").upper()
+        severity_emoji = {"ERROR": "🔴", "WARN": "🟡", "INFO": "🔵"}.get(severity, "🔵")
+        category = issue.get("category", "general")
+        message = issue.get("message", "")
+        suggestion = issue.get("suggestion")
+
         parts = [
-            f"{severity_emoji} **{issue.get('severity', 'info').upper()}** | {issue.get('category', 'general')}",
+            f"{severity_emoji} **{severity}** | `{category}`",
             "",
-            issue.get("message", ""),
+            f"**What's wrong:** {message}",
         ]
-        if issue.get("suggestion"):
-            parts.extend(["", f"**Suggestion:** {issue['suggestion']}"])
+        if suggestion:
+            parts.extend(["", f"**How to fix:** {suggestion}"])
 
         h = issue_hash(issue)
-        parts.extend(["", f"<!-- hash:{h} -->"])
+        parts.extend(["", f"---", f"*— {BOT_NAME}*", f"<!-- hash:{h} -->"])
 
         return "\n".join(parts)
 
@@ -304,12 +315,16 @@ class CommentManager:
         for nit in nits:
             line = nit.get("line", "?")
             msg = nit.get("message", "")
-            parts.append(f"- **Line {line}**: {msg}")
+            suggestion = nit.get("suggestion")
+            entry = f"- **Line {line}:** {msg}"
+            if suggestion:
+                entry += f" — *Fix: {suggestion}*"
+            parts.append(entry)
 
         # Hash the consolidated set
         combined = "|".join(issue_hash(n) for n in nits)
         h = hashlib.sha256(combined.encode()).hexdigest()[:16]
-        parts.extend(["", f"<!-- hash:{h} -->"])
+        parts.extend(["", f"---", f"*— {BOT_NAME}*", f"<!-- hash:{h} -->"])
 
         return "\n".join(parts)
 

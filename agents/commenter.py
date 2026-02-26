@@ -15,6 +15,7 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 DEFAULT_SUMMARY_MARKER = "<!-- AI-REVIEW-SUMMARY -->"
+BOT_NAME = "🤖 AI Code Reviewer"
 
 
 class CommentAgent:
@@ -53,7 +54,7 @@ class CommentAgent:
         }
 
         # --- Summary comment (idempotent) ---
-        summary_body = f"{self.summary_marker}\n\n{summary_text}"
+        summary_body = f"{self.summary_marker}\n\n**{BOT_NAME}**\n\n{summary_text}"
         receipt["summary_id"] = self._upsert_summary(repo, pr_number, summary_body)
 
         # --- Inline comments ---
@@ -68,15 +69,19 @@ class CommentAgent:
 
         # Prefer batch review API for efficiency
         review_comments = self._build_review_comments(inline_issues)
+        has_errors = any(
+            i.get("severity") in ("error", "warn") for i in issues
+        )
+        review_event = "REQUEST_CHANGES" if has_errors else "COMMENT"
         if review_comments:
             try:
                 review_id = self.gh.post_review(
                     repo=repo,
                     pr=pr_number,
                     commit_sha=head_sha,
-                    body="",
+                    body=f"**{BOT_NAME}** found **{len(issues)}** issue(s) requiring attention.",
                     comments=review_comments,
-                    event="COMMENT",
+                    event=review_event,
                 )
                 receipt["inline_ids"].append({"review_id": review_id})
                 logger.info(
@@ -128,16 +133,25 @@ class CommentAgent:
                 continue
 
             severity = iss.get("severity", "info").upper()
+            severity_emoji = {"ERROR": "🔴", "WARN": "🟡", "INFO": "🔵"}.get(severity, "🔵")
             category = iss.get("category", "")
             message = iss.get("message", "")
             suggestion = iss.get("suggestion")
             dedupe_hash = iss.get("_hash", "")
 
-            body_parts = [f"**[{severity}]** {category}: {message}"]
+            body_parts = [
+                f"{severity_emoji} **{severity}** | `{category}`",
+                "",
+                f"**What's wrong:** {message}",
+            ]
             if suggestion:
-                body_parts.append(f"\n```suggestion\n{suggestion}\n```")
+                body_parts.extend([
+                    "",
+                    f"**How to fix:** {suggestion}",
+                ])
+            body_parts.append(f"\n---\n*— {BOT_NAME}*")
             if dedupe_hash:
-                body_parts.append(f"\n<!-- ai-review-hash:{dedupe_hash} -->")
+                body_parts.append(f"<!-- ai-review-hash:{dedupe_hash} -->")
 
             comments.append({
                 "path": path,
@@ -162,8 +176,19 @@ class CommentAgent:
             if not path or not isinstance(line, int):
                 continue
             severity = iss.get("severity", "info").upper()
+            severity_emoji = {"ERROR": "🔴", "WARN": "🟡", "INFO": "🔵"}.get(severity, "🔵")
+            category = iss.get("category", "")
             message = iss.get("message", "")
-            body = f"**[{severity}]** {message}"
+            suggestion = iss.get("suggestion")
+            body_parts = [
+                f"{severity_emoji} **{severity}** | `{category}`",
+                "",
+                f"**What's wrong:** {message}",
+            ]
+            if suggestion:
+                body_parts.extend(["", f"**How to fix:** {suggestion}"])
+            body_parts.append(f"\n---\n*— {BOT_NAME}*")
+            body = "\n".join(body_parts)
             try:
                 cid = self.gh.post_inline_comment_basic(
                     repo=repo,
