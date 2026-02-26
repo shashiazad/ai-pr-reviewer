@@ -26,6 +26,14 @@ _SECRET_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
         "Move secrets to environment variables or a secret manager.",
     ),
     (
+        re.compile(
+            r"""(?:password|passwd|pwd|secret|api.?key|access.?key|auth.?token|private.?key)\s*=\s*[A-Za-z0-9_\-+/=]{8,}""",
+            re.IGNORECASE,
+        ),
+        "Potential hardcoded secret",
+        "Move secrets to environment variables or a secret manager.",
+    ),
+    (
         re.compile(r"""(?:AKIA|ASIA)[A-Z0-9]{16}"""),
         "Potential AWS access key ID",
         "Remove and rotate this key immediately. Use IAM roles or environment variables.",
@@ -58,6 +66,8 @@ _UNSAFE_PATTERNS: dict[str, list[tuple[re.Pattern[str], str, str, str]]] = {
     ],
     "bash": [
         (re.compile(r"""\beval\b"""), "warn", "Use of eval in shell", "Avoid eval with untrusted input."),
+        (re.compile(r"""\brm\s+-rf\s+/"""), "error", "Potentially destructive rm -rf usage", "Avoid broad recursive deletes; scope paths safely and validate inputs."),
+        (re.compile(r"""\[\s*\$[A-Za-z_][A-Za-z0-9_]*\s*=="""), "warn", "Unquoted shell variable in test expression", "Quote variables in test expressions to avoid word-splitting/globbing bugs."),
     ],
     "ansible": [
         (re.compile(r"""\bshell\s*:"""), "warn", "Ansible shell module usage", "Prefer built-in modules for idempotency."),
@@ -202,6 +212,8 @@ class ReviewerAgent:
         """
         all_issues: list[dict[str, Any]] = []
         linter_map = self._build_linter_map(linter_results or [])
+        llm_attempts = 0
+        llm_successes = 0
 
         # Phase 1: Security pre-scan (no LLM, instant)
         for task in plan.file_tasks:
@@ -229,13 +241,20 @@ class ReviewerAgent:
                     diff_text=chunk.context,
                     linter_context=linter_ctx,
                 )
+                llm_attempts += 1
                 try:
                     issues = self.llm.review_chunk(self.system_prompt, prompt)
+                    llm_successes += 1
                     all_issues.extend(issues)
                 except Exception as exc:  # noqa: BLE001
                     logger.error(
                         "LLM review failed for %s: %s", task.filename, str(exc)[:200]
                     )
+
+        if llm_attempts > 0 and llm_successes == 0:
+            raise RuntimeError(
+                "All LLM review chunk calls failed. Verify GEMINI_API_KEY and model access."
+            )
 
         # Phase 3: Generate summary
         findings_text = self._summarize_findings(all_issues)

@@ -86,6 +86,11 @@ def main(argv: list[str] | None = None) -> int:
         print("Error: GITHUB_TOKEN environment variable is not set.", file=sys.stderr)
         return 1
 
+    if not os.environ.get("GEMINI_API_KEY"):
+        logger.error("GEMINI_API_KEY environment variable is required")
+        print("Error: GEMINI_API_KEY environment variable is not set.", file=sys.stderr)
+        return 1
+
     # Apply env overrides to dry-run
     dry_run = args.dry_run or os.environ.get("AI_REVIEW_DRY_RUN", "").lower() in (
         "1", "true", "yes",
