@@ -54,6 +54,8 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --quiet \
+            --extra-index https://artifacts.dell.com/artifactory/api/pypi/agtsdk-1007569-pypi-prd-local/simple \
+            --trusted-host artifacts.dell.com \
             -r ai-pr-reviewer/scripts/requirements.txt \
             -r ai-pr-reviewer/model/requirements.txt
 
