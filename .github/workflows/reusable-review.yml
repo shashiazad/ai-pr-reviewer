@@ -20,7 +20,7 @@ on:
       token:
         required: true
       gemini_api_key:
-        required: true
+        required: false
 
 permissions:
   contents: read
@@ -54,6 +54,14 @@ jobs:
           pip install --quiet \
             -r ai-pr-reviewer/scripts/requirements.txt \
             -r ai-pr-reviewer/model/requirements.txt
+
+      - name: Check Gemini API Key
+        if: secrets.gemini_api_key == ''
+        run: |
+          echo "::error::GEMINI_API_KEY secret is required but not provided."
+          echo "::error::Please add a GEMINI_API_KEY secret to your repository settings."
+          echo "::error::Get a free API key at: https://aistudio.google.com/app/apikey"
+          exit 1
 
       - name: Run Agentic AI Review
         env:
