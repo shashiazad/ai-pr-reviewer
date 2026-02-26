@@ -9,8 +9,8 @@ Usage:
 
 Environment overrides:
     GITHUB_TOKEN           — GitHub API token (required)
-    AI_MODEL_BASE_URL      — override Dell Gateway base URL or localhost
-    AI_MODEL_TOKEN         — static bearer token (testing only)
+    GEMINI_API_KEY         — Google Gemini API key (required)
+    GEMINI_MODEL_NAME      — Gemini model name (default: gemini-2.0-flash)
     AI_REVIEW_MAX_COMMENTS — max inline comments (default: 20)
     AI_REVIEW_SEVERITY     — minimum severity: info, warn, error
     AI_REVIEW_TEMPERATURE  — LLM temperature (default: 0.1)

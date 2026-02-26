@@ -1,8 +1,7 @@
 """LLM interaction layer for AI Code Reviewer.
 
-Wraps model.SharedGPTConnector with chunking, JSON schema validation,
-retries with exponential backoff, and support for both hosted and local
-model endpoints.
+Wraps model.GeminiConnector with chunking, JSON schema validation,
+and retries with exponential backoff.
 """
 
 import json
@@ -19,7 +18,7 @@ _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from model import SharedGPTConnector
+from model import GeminiConnector
 
 from .config import ReviewerConfig
 from .prompts import SYSTEM_PROMPT, build_per_file_prompt, build_summary_prompt
@@ -83,7 +82,7 @@ def extract_json_array(text: str) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 class LLMClient:
-    """Wrapper around SharedGPTConnector with retry, validation, and chunking."""
+    """Wrapper around GeminiConnector with retry, validation, and chunking."""
 
     def __init__(self, cfg: ReviewerConfig) -> None:
         self.cfg = cfg
@@ -91,29 +90,10 @@ class LLMClient:
         self._total_tokens_approx = 0
         self._start_time = time.monotonic()
 
-        # Configure connector based on local vs hosted endpoint
-        env_overrides: Dict[str, str] = {}
-        if cfg.local_model_url:
-            env_overrides["DELL_GATEWAY_BASE_URL"] = cfg.local_model_url
-            env_overrides["USE_SSO"] = "false"
-
-        # Apply env overrides temporarily for connector init
-        original_env: Dict[str, Optional[str]] = {}
-        for key, val in env_overrides.items():
-            original_env[key] = os.environ.get(key)
-            os.environ[key] = val
-
-        try:
-            self.connector = SharedGPTConnector(
-                temperature=cfg.temperature,
-                max_tokens=cfg.max_tokens_per_request,
-            )
-        finally:
-            for key, val in original_env.items():
-                if val is None:
-                    os.environ.pop(key, None)
-                else:
-                    os.environ[key] = val
+        self.connector = GeminiConnector(
+            temperature=cfg.temperature,
+            max_tokens=cfg.max_tokens_per_request,
+        )
 
     @property
     def stats(self) -> Dict[str, Any]:

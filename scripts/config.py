@@ -62,9 +62,8 @@ class ReviewerConfig:
     pr_number: int = 0
     base_ref: str = ""
     head_sha: str = ""
-    dell_gateway_base_url: str = "https://aia.gateway.dell.com/genai/dev/v1"
-    use_sso: bool = True
-    local_model_url: Optional[str] = None
+    gemini_api_key: str = ""
+    gemini_model_name: str = "gemini-2.0-flash"
 
 
 def load_config(config_path: Optional[str] = None) -> ReviewerConfig:
@@ -84,11 +83,8 @@ def load_config(config_path: Optional[str] = None) -> ReviewerConfig:
     # --- Override from environment ---
     cfg.github_token = os.getenv("GITHUB_TOKEN", "")
     cfg.github_repository = os.getenv("GITHUB_REPOSITORY", "")
-    cfg.dell_gateway_base_url = os.getenv(
-        "DELL_GATEWAY_BASE_URL", cfg.dell_gateway_base_url
-    )
-    cfg.use_sso = os.getenv("USE_SSO", "true").lower() == "true"
-    cfg.local_model_url = os.getenv("LOCAL_MODEL_URL") or None
+    cfg.gemini_api_key = os.getenv("GEMINI_API_KEY", "")
+    cfg.gemini_model_name = os.getenv("GEMINI_MODEL_NAME", cfg.gemini_model_name)
 
     if os.getenv("AI_REVIEWER_DRY_RUN", "").lower() in ("true", "1", "yes"):
         cfg.dry_run = True

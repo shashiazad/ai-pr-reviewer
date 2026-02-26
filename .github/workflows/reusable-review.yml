@@ -19,10 +19,8 @@ on:
     secrets:
       token:
         required: true
-      client_id:
-        required: false
-      client_secret:
-        required: false
+      gemini_api_key:
+        required: true
 
 permissions:
   contents: read
@@ -54,14 +52,13 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --quiet \
-            --extra-index https://artifacts.dell.com/artifactory/api/pypi/agtsdk-1007569-pypi-prd-local/simple \
-            --trusted-host artifacts.dell.com \
             -r ai-pr-reviewer/scripts/requirements.txt \
             -r ai-pr-reviewer/model/requirements.txt
 
       - name: Run Agentic AI Review
         env:
           GITHUB_TOKEN: ${{ secrets.token }}
+          GEMINI_API_KEY: ${{ secrets.gemini_api_key }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           AI_REVIEW_MAX_COMMENTS: ${{ inputs.max_comments }}

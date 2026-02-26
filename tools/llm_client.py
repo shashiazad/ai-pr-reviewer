@@ -1,15 +1,14 @@
-"""LLM client wrapping model.SharedGPTConnector with retry, JSON validation, and budgeting."""
+"""LLM client wrapping model.GeminiConnector with retry, JSON validation, and budgeting."""
 
 from __future__ import annotations
 
 import json
-import os
 import random
 import re
 import time
 from typing import Any
 
-from tools.common import get_logger, redact_secrets, env_or, env_float, env_int
+from tools.common import get_logger, env_float, env_int
 
 logger = get_logger(__name__)
 
@@ -69,13 +68,13 @@ def validate_issues(raw: list[Any]) -> list[dict[str, Any]]:
 
 
 class LLMClient:
-    """Wraps model.SharedGPTConnector with retry, schema validation, and budgeting.
+    """Wraps model.GeminiConnector with retry, schema validation, and budgeting.
 
     Environment overrides:
-      AI_MODEL_BASE_URL  — override Dell Gateway base URL or point to localhost
-      AI_MODEL_TOKEN     — static bearer token (testing only)
-      AI_REVIEW_TEMPERATURE — prompt temperature
-      AI_REVIEW_TIMEOUT  — per-call timeout in seconds
+      GEMINI_API_KEY         — Google Gemini API key (required)
+      GEMINI_MODEL_NAME      — Gemini model name (default: gemini-2.0-flash)
+      AI_REVIEW_TEMPERATURE  — prompt temperature
+      AI_REVIEW_TIMEOUT      — per-call timeout in seconds
     """
 
     def __init__(
@@ -94,18 +93,13 @@ class LLMClient:
         self._connector: Any = None
 
     def _get_connector(self) -> Any:
-        """Lazily import and instantiate SharedGPTConnector."""
+        """Lazily import and instantiate GeminiConnector."""
         if self._connector is not None:
             return self._connector
 
-        local_url = env_or("AI_MODEL_BASE_URL")
-        if local_url:
-            logger.info("Using override base URL: %s", redact_secrets(local_url))
-            os.environ["DELL_GATEWAY_BASE_URL"] = local_url
+        from model import GeminiConnector  # type: ignore[import-untyped]
 
-        from model import SharedGPTConnector  # type: ignore[import-untyped]
-
-        self._connector = SharedGPTConnector(
+        self._connector = GeminiConnector(
             temperature=self.temperature,
             max_tokens=self.max_tokens,
             timeout_seconds=self.timeout,
