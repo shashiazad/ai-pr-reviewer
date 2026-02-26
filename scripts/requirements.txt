@@ -1,0 +1,7 @@
+# AI Code Reviewer — script dependencies
+# Install alongside model/requirements.txt:
+#   pip install -r model/requirements.txt -r scripts/requirements.txt
+
+requests==2.32.3
+python-dotenv>=1.0.0,<2
+jsonschema==4.22.0

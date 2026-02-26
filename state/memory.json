@@ -1,0 +1,7 @@
+{
+  "schema_version": "1.0.0",
+  "description": "Per-run short-term state and optional long-term dedupe cache for the AI Code Reviewer.",
+  "current_run": null,
+  "dedupe_fingerprints": {},
+  "historical_rubric_tuning": {}
+}
