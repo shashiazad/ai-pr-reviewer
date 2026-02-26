@@ -56,7 +56,7 @@ jobs:
             -r ai-pr-reviewer/model/requirements.txt
 
       - name: Check Gemini API Key
-        if: !secrets.gemini_api_key
+        if: ${{ !secrets.gemini_api_key }}
         run: |
           echo "::error::GEMINI_API_KEY secret is required but not provided."
           echo "::error::Please add a GEMINI_API_KEY secret to your repository settings."
