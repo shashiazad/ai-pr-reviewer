@@ -42,9 +42,9 @@ jobs:
           AI_REVIEW_DRY_RUN: ${{ inputs.dry_run }}
           PYTHONPATH: .ai-reviewer-tool
         run: |
-          python .ai-reviewer-tool/runner.py \
+          python .ai-pr-reviewer/runner.py \
             --repo "$GITHUB_REPOSITORY" \
             --pr "$PR_NUMBER" \
             --config .ai-reviewer.json \
-            --policy .ai-reviewer-tool/configs/agent_policy.json \
-            --templates .ai-reviewer-tool/policies/prompt_templates.json
+            --policy .ai-pr-reviewer/configs/agent_policy.json \
+            --templates .ai-pr-reviewer/policies/prompt_templates.json
