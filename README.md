@@ -32,8 +32,10 @@ Both pipelines review PR diffs and post comments through GitHub APIs.
 ## 2) Tech stack and dependencies
 
 - **Language:** Python 3.11+
-- **LLM provider:** Google Gemini (`GEMINI_API_KEY`)
+- **LLM provider:** Google Gemini via `langchain-google-genai` (`ChatGoogleGenerativeAI`)
 - **Model default:** `gemini-2.0-flash`
+- **Orchestration:** LangGraph `StateGraph` (compiled, conditional-edge pipeline)
+- **LLM framework:** LangChain Core (message types, model abstraction)
 - **GitHub integration:** GitHub REST API (PR metadata, comments, reviews)
 - **CI/CD:** GitHub Actions (reusable workflow + caller workflow)
 - **Static checks/linters:** Terraform, Ansible, YAML, Python, Shell toolchain (depending on changed files)
@@ -41,7 +43,8 @@ Both pipelines review PR diffs and post comments through GitHub APIs.
 Key files:
 
 - `runner.py` – CLI entrypoint for agentic flow
-- `agents/orchestrator.py` – state-machine controller
+- `agents/orchestrator.py` – LangGraph-powered pipeline controller
+- `agents/graph.py` – LangGraph state schema + compiled graph builder
 - `agents/planner.py` – diff planning/chunking/linter selection
 - `agents/reviewer.py` – regex + LLM review execution
 - `agents/critic.py` – schema/duplication/severity/budget validation
@@ -72,13 +75,27 @@ Optional controls:
 - `AI_REVIEW_TIMEOUT`
 - `GEMINI_MODEL_NAME`
 
-### 3.2 Orchestrator state machine
+### 3.2 LangGraph orchestrator
 
-The primary workflow runs through:
+The primary workflow is a compiled **LangGraph `StateGraph`** with typed state and conditional edges:
 
-`PLAN -> GATHER_DIFF -> RUN_LINTERS -> REVIEW_CHUNKS -> CRITIQUE_VALIDATE -> POST_COMMENTS -> SUMMARIZE -> DONE`
+```
+fetch_pr → plan_and_diff →[skip?]→ run_linters → review_chunks
+                               │                       │
+                               ▼              [budget expired?]
+                        post_comments ◄── critique ◄───┘
+                               │
+                               ▼
+                          summarize → END
+```
 
-If a step fails, it retries with bounded attempts and can fail gracefully while still posting a failure summary.
+Key LangGraph features used:
+
+- **Typed state** (`ReviewState` TypedDict) flows between nodes
+- **Conditional edges** for skip-review, budget expiry, and error routing
+- **Per-node retry** with bounded attempts and exponential backoff
+- **Graceful failure node** posts a failure summary to avoid silent failures
+- Agent instances captured via **closure** (not serialised into state)
 
 ### 3.3 PlannerAgent
 
@@ -213,13 +230,15 @@ permissions:
 
 ## 9) High-level architecture summary
 
-1. Fetch PR metadata + unified diff
-2. Build bounded plan (files/chunks/linters)
-3. Run deterministic scans + linters
-4. Run LLM review chunk-by-chunk with strict prompts
-5. Validate and prioritize issues
-6. Post inline comments + summary as GitHub review
-7. Return structured run receipt/audit metadata
+1. **fetch_pr** — Fetch PR metadata from GitHub API
+2. **plan_and_diff** — Fetch unified diff, filter files, chunk for LLM, select linters
+3. **run_linters** — Execute relevant linters (Terraform, YAML, Ansible, Black, ShellCheck)
+4. **review_chunks** — Deterministic regex scans + LLM review per chunk (via `langchain-google-genai`)
+5. **critique** — Deduplicate, validate severity, enforce comment budget, detect contradictions
+6. **post_comments** — Post inline comments + summary as GitHub review (`REQUEST_CHANGES` for blocking issues)
+7. **summarize** — Log final stats and return structured receipt
+
+All nodes are wired into a compiled **LangGraph `StateGraph`** with conditional routing for skip, budget, and error paths.
 
 ---
 

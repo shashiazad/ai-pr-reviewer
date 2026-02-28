@@ -1,18 +1,24 @@
-"""AgentOrchestrator — ReAct state machine that drives the full review pipeline.
+"""AgentOrchestrator — LangGraph-powered pipeline that drives the full review.
 
-State machine:
-  PLAN → GATHER_DIFF → RUN_LINTERS → REVIEW_CHUNKS → CRITIQUE_VALIDATE
-  → POST_COMMENTS → SUMMARIZE → DONE
+The graph topology is defined in ``agents.graph`` and compiled into a
+runnable that replaces the previous hand-rolled state-machine loop.
 
-On failure at any state: SELF_HEAL_RETRY (bounded) → FAIL_GRACEFULLY
+Pipeline:
+  fetch_pr → plan_and_diff →[skip?]→ run_linters → review_chunks
+                                 │                       │
+                                 ▼              [budget expired?]
+                          post_comments ◄── critique ◄───┘
+                                 │
+                                 ▼
+                            summarize → END
+
+On unrecoverable node failure → fail_gracefully → END
 """
 
 from __future__ import annotations
 
 import json
 import os
-import traceback
-from enum import Enum
 from typing import Any
 
 from tools.common import (
@@ -25,45 +31,16 @@ from tools.common import (
 )
 from tools.github_client import GitHubClient, PRMetadata
 from tools.llm_client import LLMClient
-from tools.linters import LintResult, run_all_linters
-from tools.diff_utils import parse_unified_diff, build_line_map
+from tools.linters import LintResult
 
 from agents.planner import PlannerAgent, ReviewPlan
 from agents.reviewer import ReviewerAgent
 from agents.critic import CriticAgent
 from agents.commenter import CommentAgent
+from agents.graph import build_review_graph, ReviewState
 
 logger = get_logger(__name__)
 
-# ---------------------------------------------------------------------------
-# States
-# ---------------------------------------------------------------------------
-
-
-class State(str, Enum):
-    PLAN = "PLAN"
-    GATHER_DIFF = "GATHER_DIFF"
-    RUN_LINTERS = "RUN_LINTERS"
-    REVIEW_CHUNKS = "REVIEW_CHUNKS"
-    CRITIQUE_VALIDATE = "CRITIQUE_VALIDATE"
-    POST_COMMENTS = "POST_COMMENTS"
-    SUMMARIZE = "SUMMARIZE"
-    DONE = "DONE"
-    SELF_HEAL_RETRY = "SELF_HEAL_RETRY"
-    FAIL_GRACEFULLY = "FAIL_GRACEFULLY"
-
-
-# Ordered pipeline
-_PIPELINE = [
-    State.PLAN,
-    State.GATHER_DIFF,
-    State.RUN_LINTERS,
-    State.REVIEW_CHUNKS,
-    State.CRITIQUE_VALIDATE,
-    State.POST_COMMENTS,
-    State.SUMMARIZE,
-    State.DONE,
-]
 
 # ---------------------------------------------------------------------------
 # Orchestrator
@@ -71,7 +48,7 @@ _PIPELINE = [
 
 
 class AgentOrchestrator:
-    """Drives the end-to-end agentic review loop."""
+    """Drives the end-to-end agentic review loop via a compiled LangGraph."""
 
     def __init__(
         self,
@@ -128,213 +105,77 @@ class AgentOrchestrator:
             dry_run=self.dry_run,
         )
 
-        # Run state
-        self._state = State.PLAN
-        self._pr: PRMetadata | None = None
-        self._raw_diff: str = ""
-        self._plan: ReviewPlan | None = None
-        self._linter_results: list[LintResult] = []
-        self._raw_issues: list[dict[str, Any]] = []
-        self._validated_issues: list[dict[str, Any]] = []
-        self._summary: str = ""
-        self._receipt: dict[str, Any] = {}
+        # Build compiled LangGraph
+        self._graph = build_review_graph(
+            gh=self.gh,
+            llm=self.llm,
+            planner=self.planner,
+            reviewer=self.reviewer,
+            critic=self.critic,
+            commenter=self.commenter,
+            budget=self.budget,
+            max_retries=self.max_retries,
+            max_comments=self.max_comments,
+        )
 
     # -- main entry point ----------------------------------------------------
 
     def run(self) -> dict[str, Any]:
-        """Execute the full pipeline.  Returns a receipt dict."""
+        """Execute the LangGraph review pipeline.  Returns a receipt dict."""
         logger.info(
-            "Orchestrator starting: repo=%s pr=%d dry_run=%s",
+            "Orchestrator starting (LangGraph): repo=%s pr=%d dry_run=%s",
             self.repo,
             self.pr_number,
             self.dry_run,
         )
-        retry_count: dict[str, int] = {}
 
-        idx = 0
-        while idx < len(_PIPELINE):
-            state = _PIPELINE[idx]
-            self._state = state
+        # Seed the initial graph state
+        initial_state: ReviewState = {
+            "repo": self.repo,
+            "pr_number": self.pr_number,
+            "dry_run": self.dry_run,
+            "raw_diff": "",
+            "linter_results": [],
+            "raw_issues": [],
+            "validated_issues": [],
+            "summary": "",
+            "receipt": {},
+            "skip_review": False,
+            "error": "",
+            "current_node": "",
+        }
 
-            if self.budget.expired and state not in (State.POST_COMMENTS, State.SUMMARIZE, State.DONE):
-                logger.warning("Budget expired at state %s; jumping to POST_COMMENTS", state)
-                idx = _PIPELINE.index(State.POST_COMMENTS)
-                continue
+        # Invoke the compiled graph
+        final_state = self._graph.invoke(initial_state)
 
-            try:
-                self._log_transition(state)
-                self._execute_state(state)
-                idx += 1
-            except Exception as exc:  # noqa: BLE001
-                state_key = state.value
-                retry_count.setdefault(state_key, 0)
-                retry_count[state_key] += 1
-
-                if retry_count[state_key] <= self.max_retries:
-                    logger.warning(
-                        "State %s failed (attempt %d/%d): %s — retrying",
-                        state_key,
-                        retry_count[state_key],
-                        self.max_retries,
-                        str(exc)[:300],
-                    )
-                    # Stay on same index to retry
-                else:
-                    logger.error(
-                        "State %s failed after %d retries: %s",
-                        state_key,
-                        self.max_retries,
-                        str(exc)[:300],
-                    )
-                    self._fail_gracefully(exc)
-                    break
-
-        result = self._build_result()
+        result = self._build_result(final_state)
         if self.audit_log:
             write_audit_log(self.audit_log, result)
         return result
 
-    # -- state dispatch ------------------------------------------------------
-
-    def _execute_state(self, state: State) -> None:
-        dispatch = {
-            State.PLAN: self._do_plan,
-            State.GATHER_DIFF: self._do_gather_diff,
-            State.RUN_LINTERS: self._do_run_linters,
-            State.REVIEW_CHUNKS: self._do_review_chunks,
-            State.CRITIQUE_VALIDATE: self._do_critique,
-            State.POST_COMMENTS: self._do_post_comments,
-            State.SUMMARIZE: self._do_summarize,
-            State.DONE: self._do_done,
-        }
-        handler = dispatch.get(state)
-        if handler:
-            handler()
-        else:
-            raise ValueError(f"Unknown state: {state}")
-
-    # -- individual state handlers -------------------------------------------
-
-    def _do_plan(self) -> None:
-        # Fetch PR metadata first (needed for planning)
-        self._pr = self.gh.get_pr_metadata(self.repo, self.pr_number)
-        logger.info("PR: %s by %s", self._pr.title, self._pr.author)
-
-    def _do_gather_diff(self) -> None:
-        assert self._pr is not None
-        self._raw_diff = self.gh.get_unified_diff(self.repo, self.pr_number)
-        self._plan = self.planner.plan(self._pr, self._raw_diff, self.budget)
-
-        if self._plan.skip_review:
-            logger.info("Plan says skip: %s", self._plan.skip_reason)
-            # Jump directly to DONE by setting state appropriately
-            self._summary = (
-                f"## AI Code Review\n\nNo reviewable files found. "
-                f"Reason: {self._plan.skip_reason}"
-            )
-
-    def _do_run_linters(self) -> None:
-        if self._plan and self._plan.skip_review:
-            return
-        assert self._plan is not None
-        enabled = {tool: True for tool in self._plan.linters_to_run}
-        changed_files = [t.filename for t in self._plan.file_tasks]
-        self._linter_results = run_all_linters(
-            changed_files=changed_files, enabled=enabled
-        )
-        logger.info(
-            "Linters completed: %d tools run",
-            len(self._linter_results),
-        )
-
-    def _do_review_chunks(self) -> None:
-        if self._plan and self._plan.skip_review:
-            return
-        assert self._plan is not None
-        self._raw_issues, self._summary = self.reviewer.review_plan(
-            self._plan,
-            linter_results=self._linter_results,
-            budget=self.budget,
-        )
-        logger.info("Reviewer produced %d raw issues", len(self._raw_issues))
-
-    def _do_critique(self) -> None:
-        if self._plan and self._plan.skip_review:
-            return
-        self._validated_issues = self.critic.critique(self._raw_issues)
-
-        # Advisory contradiction check
-        contradictions = self.critic.detect_contradictions(self._validated_issues)
-        if contradictions:
-            logger.warning(
-                "Critic detected %d potential contradictions", len(contradictions)
-            )
-
-    def _do_post_comments(self) -> None:
-        assert self._pr is not None
-        self._receipt = self.commenter.post_results(
-            repo=self.repo,
-            pr_number=self.pr_number,
-            head_sha=self._pr.head_sha,
-            issues=self._validated_issues,
-            summary_text=self._summary,
-        )
-
-    def _do_summarize(self) -> None:
-        logger.info(
-            "Review complete: %d validated issues, summary posted=%s",
-            len(self._validated_issues),
-            bool(self._receipt.get("summary_id")),
-        )
-
-    def _do_done(self) -> None:
-        logger.info("Orchestrator finished in %.1fs", self.budget.elapsed)
-
-    # -- failure handling ----------------------------------------------------
-
-    def _fail_gracefully(self, exc: Exception) -> None:
-        """Post a minimal failure summary to avoid silent failures."""
-        self._state = State.FAIL_GRACEFULLY
-        logger.error("Failing gracefully: %s", str(exc)[:500])
-
-        failure_summary = (
-            f"## AI Code Review — Failure\n\n"
-            f"The automated review encountered an error and could not complete.\n\n"
-            f"```\n{str(exc)[:300]}\n```\n\n"
-            f"*Please review this PR manually.*"
-        )
-
-        try:
-            if self._pr:
-                self.commenter.post_results(
-                    repo=self.repo,
-                    pr_number=self.pr_number,
-                    head_sha=self._pr.head_sha if self._pr else "",
-                    issues=[],
-                    summary_text=failure_summary,
-                )
-        except Exception as post_exc:  # noqa: BLE001
-            logger.error("Failed to post failure summary: %s", str(post_exc)[:200])
-
     # -- helpers -------------------------------------------------------------
 
-    def _log_transition(self, state: State) -> None:
-        logger.info(
-            "State: %s (elapsed=%.1fs, remaining=%.1fs)",
-            state.value,
-            self.budget.elapsed,
-            self.budget.remaining,
-        )
+    def _build_result(self, state: dict[str, Any]) -> dict[str, Any]:
+        """Convert final graph state into the legacy receipt dict."""
+        plan = state.get("plan")
+        final_node = state.get("current_node", "unknown")
+        has_error = bool(state.get("error"))
 
-    def _build_result(self) -> dict[str, Any]:
+        if has_error:
+            final_state_label = "FAIL_GRACEFULLY"
+        elif final_node == "summarize":
+            final_state_label = "DONE"
+        else:
+            final_state_label = final_node.upper()
+
         return {
             "repo": self.repo,
             "pr_number": self.pr_number,
-            "final_state": self._state.value,
+            "final_state": final_state_label,
             "elapsed_seconds": round(self.budget.elapsed, 2),
-            "total_raw_issues": len(self._raw_issues),
-            "total_validated_issues": len(self._validated_issues),
-            "receipt": self._receipt,
+            "total_raw_issues": len(state.get("raw_issues", [])),
+            "total_validated_issues": len(state.get("validated_issues", [])),
+            "receipt": state.get("receipt", {}),
             "dry_run": self.dry_run,
-            "plan": self._plan.to_dict() if self._plan else None,
+            "plan": plan.to_dict() if plan and hasattr(plan, "to_dict") else None,
         }

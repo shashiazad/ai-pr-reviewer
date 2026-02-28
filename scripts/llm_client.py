@@ -1,6 +1,6 @@
 """LLM interaction layer for AI Code Reviewer.
 
-Wraps model.GeminiConnector with chunking, JSON schema validation,
+Wraps langchain ChatGoogleGenerativeAI with chunking, JSON schema validation,
 and retries with exponential backoff.
 """
 
@@ -18,7 +18,8 @@ _project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from model import GeminiConnector
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 
 from .config import ReviewerConfig
 from .prompts import SYSTEM_PROMPT, build_per_file_prompt, build_summary_prompt
@@ -82,7 +83,7 @@ def extract_json_array(text: str) -> List[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 class LLMClient:
-    """Wrapper around GeminiConnector with retry, validation, and chunking."""
+    """Wrapper around langchain ChatGoogleGenerativeAI with retry, validation, and chunking."""
 
     def __init__(self, cfg: ReviewerConfig) -> None:
         self.cfg = cfg
@@ -90,9 +91,11 @@ class LLMClient:
         self._total_tokens_approx = 0
         self._start_time = time.monotonic()
 
-        self.connector = GeminiConnector(
+        self._chat_model = ChatGoogleGenerativeAI(
+            model=os.environ.get("GEMINI_MODEL_NAME", "gemini-2.0-flash"),
+            google_api_key=os.environ.get("GEMINI_API_KEY", ""),
             temperature=cfg.temperature,
-            max_tokens=cfg.max_tokens_per_request,
+            max_output_tokens=cfg.max_tokens_per_request,
         )
 
     @property
@@ -116,8 +119,8 @@ class LLMClient:
 
         user_prompt = build_per_file_prompt(filename, language, diff_content, context)
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=user_prompt),
         ]
 
         raw_response = self._call_with_retry(messages, max_retries=max_retries)
@@ -136,8 +139,8 @@ class LLMClient:
                 "(file, line, severity, category, message, suggestion). "
                 "Please try again. Return [] if no issues."
             )
-            messages.append({"role": "assistant", "content": raw_response})
-            messages.append({"role": "user", "content": repair_msg})
+            messages.append(AIMessage(content=raw_response))
+            messages.append(HumanMessage(content=repair_msg))
             raw_response = self._call_with_retry(messages, max_retries=1)
             if raw_response:
                 items = extract_json_array(raw_response)
@@ -172,15 +175,15 @@ class LLMClient:
         )
 
         messages = [
-            {"role": "system", "content": "You are a code review summarizer. Produce clear, concise Markdown summaries."},
-            {"role": "user", "content": user_prompt},
+            SystemMessage(content="You are a code review summarizer. Produce clear, concise Markdown summaries."),
+            HumanMessage(content=user_prompt),
         ]
 
         return self._call_with_retry(messages, max_retries=2) or ""
 
     def _call_with_retry(
         self,
-        messages: List[Dict[str, str]],
+        messages: list,
         max_retries: int = 3,
     ) -> str:
         """Call the LLM with exponential backoff retry."""
@@ -189,15 +192,11 @@ class LLMClient:
         for attempt in range(max_retries + 1):
             try:
                 self._total_calls += 1
-                response = self.connector.chat_completion(
-                    messages=messages,
-                    temperature=self.cfg.temperature,
-                    max_tokens=self.cfg.max_tokens_per_request,
-                    stream=False,
-                )
+                response = self._chat_model.invoke(messages)
+                result = response.content
                 # Rough token approximation for stats
-                self._total_tokens_approx += len(response) // 4
-                return response
+                self._total_tokens_approx += len(result) // 4
+                return result
 
             except Exception as exc:
                 last_error = exc

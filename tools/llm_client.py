@@ -1,8 +1,9 @@
-"""LLM client wrapping model.GeminiConnector with retry, JSON validation, and budgeting."""
+"""LLM client wrapping langchain ChatGoogleGenerativeAI with retry, JSON validation, and budgeting."""
 
 from __future__ import annotations
 
 import json
+import os
 import random
 import re
 import time
@@ -68,7 +69,7 @@ def validate_issues(raw: list[Any]) -> list[dict[str, Any]]:
 
 
 class LLMClient:
-    """Wraps model.GeminiConnector with retry, schema validation, and budgeting.
+    """Wraps langchain ChatGoogleGenerativeAI with retry, schema validation, and budgeting.
 
     Environment overrides:
       GEMINI_API_KEY         — Google Gemini API key (required)
@@ -89,22 +90,24 @@ class LLMClient:
         self.max_retries = max_retries
         self.timeout = timeout or env_int("AI_REVIEW_TIMEOUT", 120)
 
-        # Lazy connector — created on first call
-        self._connector: Any = None
+        # Lazy model — created on first call
+        self._chat_model: Any = None
 
-    def _get_connector(self) -> Any:
-        """Lazily import and instantiate GeminiConnector."""
-        if self._connector is not None:
-            return self._connector
+    def _get_model(self) -> Any:
+        """Lazily import and instantiate ChatGoogleGenerativeAI."""
+        if self._chat_model is not None:
+            return self._chat_model
 
-        from model import GeminiConnector  # type: ignore[import-untyped]
+        from langchain_google_genai import ChatGoogleGenerativeAI
 
-        self._connector = GeminiConnector(
+        self._chat_model = ChatGoogleGenerativeAI(
+            model=os.environ.get("GEMINI_MODEL_NAME", "gemini-2.0-flash"),
+            google_api_key=os.environ.get("GEMINI_API_KEY", ""),
             temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            timeout_seconds=self.timeout,
+            max_output_tokens=self.max_tokens,
+            timeout=self.timeout,
         )
-        return self._connector
+        return self._chat_model
 
     # -- core call with retry ------------------------------------------------
 
@@ -116,20 +119,18 @@ class LLMClient:
         max_tokens: int | None = None,
     ) -> str:
         """Send a chat completion request with exponential backoff + jitter."""
-        connector = self._get_connector()
+        from langchain_core.messages import SystemMessage, HumanMessage
+
+        model = self._get_model()
         messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=user_prompt),
         ]
         last_err: Exception | None = None
         for attempt in range(self.max_retries + 1):
             try:
-                raw = connector.chat_completion(
-                    messages,
-                    temperature=temperature or self.temperature,
-                    max_tokens=max_tokens or self.max_tokens,
-                )
-                return raw
+                response = model.invoke(messages)
+                return response.content
             except Exception as exc:  # noqa: BLE001
                 last_err = exc
                 if attempt < self.max_retries:
