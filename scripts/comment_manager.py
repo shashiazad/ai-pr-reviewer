@@ -17,7 +17,7 @@ logger = logging.getLogger("ai-reviewer.comments")
 
 SUMMARY_MARKER = "<!-- ai-reviewer-summary -->"
 SEVERITY_ORDER = {"error": 0, "warn": 1, "info": 2}
-BOT_NAME = "🤖 AI Code Reviewer"
+BOT_NAME = "Code Reviewer"
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +197,7 @@ class CommentManager:
     ) -> None:
         """Submit a PR review with inline comments and summary body."""
         # Update or create the summary
-        body = f"{SUMMARY_MARKER}\n\n**{BOT_NAME}**\n\n{summary_markdown}"
+        body = f"{SUMMARY_MARKER}\n\n{summary_markdown}"
 
         payload: Dict[str, Any] = {
             "body": body,
@@ -287,28 +287,27 @@ class CommentManager:
     def _format_inline_comment(self, issue: Dict[str, Any]) -> str:
         """Format a single issue into a GitHub review comment body."""
         severity = issue.get("severity", "info").upper()
-        severity_emoji = {"ERROR": "🔴", "WARN": "🟡", "INFO": "🔵"}.get(severity, "🔵")
         category = issue.get("category", "general")
         message = issue.get("message", "")
         suggestion = issue.get("suggestion")
 
         parts = [
-            f"{severity_emoji} **{severity}** | `{category}`",
+            f"**{severity}** | `{category}`",
             "",
-            f"**Issue:** {message}",
+            message,
         ]
         if suggestion:
-            parts.extend(["", f"**Suggested Fix:** {suggestion}"])
+            parts.extend(["", f"**Suggestion:** {suggestion}"])
 
         h = issue_hash(issue)
-        parts.extend(["", f"---", f"*— {BOT_NAME} (advisory — please review and apply via your development workflow)*", f"<!-- hash:{h} -->"])
+        parts.append(f"<!-- hash:{h} -->")
 
         return "\n".join(parts)
 
     def _format_consolidated_nits(self, nits: List[Dict[str, Any]]) -> str:
         """Format multiple info-severity issues into a consolidated comment."""
         parts = [
-            "🔵 **Minor Suggestions**",
+            "**Minor Suggestions**",
             "",
         ]
         for nit in nits:
@@ -317,13 +316,13 @@ class CommentManager:
             suggestion = nit.get("suggestion")
             entry = f"- **Line {line}:** {msg}"
             if suggestion:
-                entry += f" — *Fix: {suggestion}*"
+                entry += f" — *Suggestion: {suggestion}*"
             parts.append(entry)
 
         # Hash the consolidated set
         combined = "|".join(issue_hash(n) for n in nits)
         h = hashlib.sha256(combined.encode()).hexdigest()[:16]
-        parts.extend(["", f"---", f"*— {BOT_NAME} (advisory — please review and apply via your development workflow)*", f"<!-- hash:{h} -->"])
+        parts.append(f"<!-- hash:{h} -->")
 
         return "\n".join(parts)
 

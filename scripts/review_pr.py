@@ -282,27 +282,24 @@ def _fallback_summary(
 
     if not issues:
         return (
-            "## AI Code Review Summary\n\n✓ No significant issues found.\n\n"
-            "> **Note:** This is an automated review. All suggestions are advisory — "
-            "please apply changes through your normal development workflow."
+            "## Code Review Summary\n\n"
+            "Looks good — no significant issues found."
         )
 
     lines = [
-        "## AI Code Review Summary\n",
+        "## Code Review Summary\n",
         f"**PR**: {pr_meta.get('title', 'N/A')}  ",
         f"**Author**: {pr_meta.get('author', 'N/A')}\n",
-        "> **Note:** This is an automated review. All suggestions are advisory — "
-        "please review each item and apply changes through your normal development workflow.\n",
         "### Statistics",
         f"- Files reviewed: {files_reviewed}",
         f"- Issues found: {len(issues)} ({error_count} errors, {warn_count} warnings, {info_count} info)\n",
-        "### Checklist",
-        "- [ ] All flagged security issues addressed",
-        "- [ ] Naming convention violations fixed",
-        "- [ ] Spelling/typo issues corrected",
-        "- [ ] Format/lint issues resolved",
-        "- [ ] Error handling reviewed",
-        "- [ ] Tests cover new/changed logic",
+        "### What Needs to Change",
+        "- [ ] Address all flagged security issues",
+        "- [ ] Fix naming convention violations",
+        "- [ ] Correct spelling/typo issues",
+        "- [ ] Resolve format/lint issues",
+        "- [ ] Review error handling",
+        "- [ ] Add unit tests for new/changed functions that lack coverage",
     ]
     return "\n".join(lines)
 

@@ -15,7 +15,7 @@ logger = get_logger(__name__)
 # ---------------------------------------------------------------------------
 
 DEFAULT_SUMMARY_MARKER = "<!-- AI-REVIEW-SUMMARY -->"
-BOT_NAME = "🤖 AI Code Reviewer"
+BOT_NAME = "Code Reviewer"
 
 
 class CommentAgent:
@@ -55,9 +55,7 @@ class CommentAgent:
 
         # --- Summary comment (idempotent) ---
         summary_body = (
-            f"{self.summary_marker}\n\n**{BOT_NAME}**\n\n{summary_text}\n\n"
-            f"---\n> ℹ️ *This is an automated review. All suggestions are advisory — "
-            f"please apply changes through your normal development workflow.*"
+            f"{self.summary_marker}\n\n{summary_text}"
         )
         receipt["summary_id"] = self._upsert_summary(repo, pr_number, summary_body)
 
@@ -83,7 +81,7 @@ class CommentAgent:
                     repo=repo,
                     pr=pr_number,
                     commit_sha=head_sha,
-                    body=f"**{BOT_NAME}** found **{len(issues)}** issue(s) requiring attention.",
+                    body=f"Found **{len(issues)}** issue(s) that need attention. Please review the inline comments below.",
                     comments=review_comments,
                     event=review_event,
                 )
@@ -137,23 +135,21 @@ class CommentAgent:
                 continue
 
             severity = iss.get("severity", "info").upper()
-            severity_emoji = {"ERROR": "🔴", "WARN": "🟡", "INFO": "🔵"}.get(severity, "🔵")
             category = iss.get("category", "")
             message = iss.get("message", "")
             suggestion = iss.get("suggestion")
             dedupe_hash = iss.get("_hash", "")
 
             body_parts = [
-                f"{severity_emoji} **{severity}** | `{category}`",
+                f"**{severity}** | `{category}`",
                 "",
-                f"**Issue:** {message}",
+                message,
             ]
             if suggestion:
                 body_parts.extend([
                     "",
-                    f"**Suggested Fix:** {suggestion}",
+                    f"**Suggestion:** {suggestion}",
                 ])
-            body_parts.append(f"\n---\n*— {BOT_NAME} (advisory — please review and apply via your development workflow)*")
             if dedupe_hash:
                 body_parts.append(f"<!-- ai-review-hash:{dedupe_hash} -->")
 
@@ -180,18 +176,16 @@ class CommentAgent:
             if not path or not isinstance(line, int):
                 continue
             severity = iss.get("severity", "info").upper()
-            severity_emoji = {"ERROR": "🔴", "WARN": "🟡", "INFO": "🔵"}.get(severity, "🔵")
             category = iss.get("category", "")
             message = iss.get("message", "")
             suggestion = iss.get("suggestion")
             body_parts = [
-                f"{severity_emoji} **{severity}** | `{category}`",
+                f"**{severity}** | `{category}`",
                 "",
-                f"**Issue:** {message}",
+                message,
             ]
             if suggestion:
-                body_parts.extend(["", f"**Suggested Fix:** {suggestion}"])
-            body_parts.append(f"\n---\n*— {BOT_NAME} (advisory — please review and apply via your development workflow)*")
+                body_parts.extend(["", f"**Suggestion:** {suggestion}"])
             body = "\n".join(body_parts)
             try:
                 cid = self.gh.post_inline_comment_basic(

@@ -277,7 +277,7 @@ class ReviewerAgent:
                         "line": 1,
                         "severity": "warn",
                         "category": "operational",
-                        "message": "LLM review could not run (quota/auth/model issue). Automated review is partial.",
+                        "message": "Review could not fully complete due to a service issue (quota/auth/model). Some checks may be missing.",
                         "suggestion": "Check GEMINI_API_KEY validity, quota limits, and model access in Gemini API settings.",
                     }
                 )
@@ -339,11 +339,9 @@ class ReviewerAgent:
         warns = sum(1 for i in issues if i.get("severity") == "warn")
         infos = sum(1 for i in issues if i.get("severity") == "info")
         return (
-            f"## AI Code Review Summary\n\n"
+            f"## Code Review Summary\n\n"
             f"**PR:** {pr.title} (#{pr.pr_number})\n\n"
-            f"> **Note:** This is an automated review. All suggestions are advisory — "
-            f"please review each item and apply changes through your normal development workflow.\n\n"
             f"Found **{len(issues)}** issues: "
             f"{errs} errors, {warns} warnings, {infos} info.\n\n"
-            f"*LLM summary generation failed; this is an auto-generated fallback.*"
+            f"Please review the inline comments and address the flagged items."
         )
