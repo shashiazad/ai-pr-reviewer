@@ -281,17 +281,25 @@ def _fallback_summary(
     info_count = sum(1 for i in issues if i.get("severity") == "info")
 
     if not issues:
-        return "## AI Code Review Summary\n\n✓ No significant issues found.\n"
+        return (
+            "## AI Code Review Summary\n\n✓ No significant issues found.\n\n"
+            "> **Note:** This is an automated review. All suggestions are advisory — "
+            "please apply changes through your normal development workflow."
+        )
 
     lines = [
         "## AI Code Review Summary\n",
         f"**PR**: {pr_meta.get('title', 'N/A')}  ",
         f"**Author**: {pr_meta.get('author', 'N/A')}\n",
+        "> **Note:** This is an automated review. All suggestions are advisory — "
+        "please review each item and apply changes through your normal development workflow.\n",
         "### Statistics",
         f"- Files reviewed: {files_reviewed}",
         f"- Issues found: {len(issues)} ({error_count} errors, {warn_count} warnings, {info_count} info)\n",
         "### Checklist",
         "- [ ] All flagged security issues addressed",
+        "- [ ] Naming convention violations fixed",
+        "- [ ] Spelling/typo issues corrected",
         "- [ ] Format/lint issues resolved",
         "- [ ] Error handling reviewed",
         "- [ ] Tests cover new/changed logic",

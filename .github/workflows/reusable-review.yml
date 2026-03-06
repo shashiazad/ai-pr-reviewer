@@ -1,4 +1,10 @@
 # .github/workflows/reusable-review.yml
+#
+# IMPORTANT: This workflow posts ADVISORY review comments only.
+# It will NEVER approve, request changes, or commit directly to the PR.
+# All suggestions must be reviewed and applied by the developer through
+# their normal development workflow (local IDE, CLI, etc.).
+#
 name: Reusable AI Code Review
 
 on:
@@ -11,7 +17,7 @@ on:
       max_comments:
         description: "Max inline comments"
         type: number
-        default: 20
+        default: 25
       severity:
         description: "Minimum severity (info, warn, error)"
         type: string
@@ -22,13 +28,15 @@ on:
       gemini_api_key:
         required: true
 
+# Minimal permissions: read code, write PR comments only.
+# No contents:write — the bot cannot push commits or modify branches.
 permissions:
   contents: read
   pull-requests: write
 
 jobs:
   review:
-    name: AI Code Review (Agentic)
+    name: AI Code Review (Advisory)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

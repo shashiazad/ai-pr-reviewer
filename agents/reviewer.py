@@ -60,6 +60,19 @@ _UNSAFE_PATTERNS: dict[str, list[tuple[re.Pattern[str], str, str, str]]] = {
         (re.compile(r"""\beval\s*\("""), "error", "Use of eval()", "Avoid eval() on untrusted input; use ast.literal_eval() if needed."),
         (re.compile(r"""subprocess\.\w+\(.*shell\s*=\s*True""", re.DOTALL), "warn", "subprocess with shell=True", "Prefer shell=False with a list of args."),
         (re.compile(r"""\bexcept\s*:"""), "warn", "Bare except clause", "Catch specific exceptions instead."),
+        (re.compile(r"""\bos\.system\s*\("""), "warn", "os.system() usage", "Use subprocess.run() with a list of arguments instead of os.system()."),
+        (re.compile(r"""\bexec\s*\("""), "warn", "exec() usage", "exec() can execute arbitrary code. Verify input is trusted."),
+        (re.compile(r"""\bpickle\.loads?\s*\("""), "warn", "pickle.load() on untrusted data", "pickle can execute arbitrary code during deserialization. Verify data source."),
+        (re.compile(r"""def\s+\w+\s*\([^)]*=\s*\[\s*\]"""), "warn", "Mutable default argument (list)", "Use None as default and create list inside function body: def f(x=None): x = x or []"),
+        (re.compile(r"""def\s+\w+\s*\([^)]*=\s*\{\s*\}"""), "warn", "Mutable default argument (dict)", "Use None as default and create dict inside function body: def f(x=None): x = x or {}"),
+    ],
+    "go": [
+        (re.compile(r"""\b_\s*=\s*\w+\."""), "warn", "Ignored error return value", "In Go, always check returned errors. Use `if err != nil` pattern instead of discarding with `_`."),
+        (re.compile(r"""\bpanic\s*\("""), "warn", "Use of panic()", "Don't use panic() for normal error handling in Go. Return an error instead."),
+        (re.compile(r"""\bgo\s+func\s*\("""), "info", "Anonymous goroutine detected", "Ensure goroutine has proper synchronization (WaitGroup, channel, or context) and error handling."),
+        (re.compile(r"""\bfmt\.Errorf\([^)]*%v.*err"""), "info", "Error wrapping with %v instead of %w", "Use %w instead of %v in fmt.Errorf to preserve the error chain for errors.Is/As."),
+        (re.compile(r"""\binit\s*\(\s*\)"""), "info", "init() function detected", "Avoid init() when possible — prefer explicit initialization for testability and clarity."),
+        (re.compile(r"""\.(Close|Flush)\s*\("""), "info", "Resource cleanup without defer", "Consider using defer for cleanup calls to ensure they run even on early returns or panics."),
     ],
     "terraform": [
         (re.compile(r"""cidr_blocks\s*=\s*\[?"0\.0\.0\.0/0"?\]"""), "error", "Open CIDR 0.0.0.0/0 in security group", "Restrict to known IP ranges."),
@@ -71,6 +84,7 @@ _UNSAFE_PATTERNS: dict[str, list[tuple[re.Pattern[str], str, str, str]]] = {
     ],
     "ansible": [
         (re.compile(r"""\bshell\s*:"""), "warn", "Ansible shell module usage", "Prefer built-in modules for idempotency."),
+        (re.compile(r"""\bcommand\s*:"""), "info", "Ansible command module usage", "Consider if a built-in module can replace this command for idempotency."),
     ],
 }
 
@@ -327,7 +341,9 @@ class ReviewerAgent:
         return (
             f"## AI Code Review Summary\n\n"
             f"**PR:** {pr.title} (#{pr.pr_number})\n\n"
+            f"> **Note:** This is an automated review. All suggestions are advisory — "
+            f"please review each item and apply changes through your normal development workflow.\n\n"
             f"Found **{len(issues)}** issues: "
             f"{errs} errors, {warns} warnings, {infos} info.\n\n"
-            f"*Note: LLM summary generation failed; this is an auto-generated fallback.*"
+            f"*LLM summary generation failed; this is an auto-generated fallback.*"
         )

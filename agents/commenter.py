@@ -54,7 +54,11 @@ class CommentAgent:
         }
 
         # --- Summary comment (idempotent) ---
-        summary_body = f"{self.summary_marker}\n\n**{BOT_NAME}**\n\n{summary_text}"
+        summary_body = (
+            f"{self.summary_marker}\n\n**{BOT_NAME}**\n\n{summary_text}\n\n"
+            f"---\n> ℹ️ *This is an automated review. All suggestions are advisory — "
+            f"please apply changes through your normal development workflow.*"
+        )
         receipt["summary_id"] = self._upsert_summary(repo, pr_number, summary_body)
 
         # --- Inline comments ---
@@ -69,10 +73,10 @@ class CommentAgent:
 
         # Prefer batch review API for efficiency
         review_comments = self._build_review_comments(inline_issues)
-        has_errors = any(
-            i.get("severity") in ("error", "warn") for i in issues
-        )
-        review_event = "REQUEST_CHANGES" if has_errors else "COMMENT"
+        # Always use COMMENT — the AI reviewer provides advisory suggestions only.
+        # Developers should review findings and decide whether to act on them.
+        # Never use REQUEST_CHANGES or APPROVE to avoid blocking the PR workflow.
+        review_event = "COMMENT"
         if review_comments:
             try:
                 review_id = self.gh.post_review(
@@ -142,14 +146,14 @@ class CommentAgent:
             body_parts = [
                 f"{severity_emoji} **{severity}** | `{category}`",
                 "",
-                f"**What's wrong:** {message}",
+                f"**Issue:** {message}",
             ]
             if suggestion:
                 body_parts.extend([
                     "",
-                    f"**How to fix:** {suggestion}",
+                    f"**Suggested Fix:** {suggestion}",
                 ])
-            body_parts.append(f"\n---\n*— {BOT_NAME}*")
+            body_parts.append(f"\n---\n*— {BOT_NAME} (advisory — please review and apply via your development workflow)*")
             if dedupe_hash:
                 body_parts.append(f"<!-- ai-review-hash:{dedupe_hash} -->")
 
@@ -183,11 +187,11 @@ class CommentAgent:
             body_parts = [
                 f"{severity_emoji} **{severity}** | `{category}`",
                 "",
-                f"**What's wrong:** {message}",
+                f"**Issue:** {message}",
             ]
             if suggestion:
-                body_parts.extend(["", f"**How to fix:** {suggestion}"])
-            body_parts.append(f"\n---\n*— {BOT_NAME}*")
+                body_parts.extend(["", f"**Suggested Fix:** {suggestion}"])
+            body_parts.append(f"\n---\n*— {BOT_NAME} (advisory — please review and apply via your development workflow)*")
             body = "\n".join(body_parts)
             try:
                 cid = self.gh.post_inline_comment_basic(

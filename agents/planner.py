@@ -74,6 +74,7 @@ _DEFAULT_LANG_MAP: dict[str, str] = {
     ".bash": "bash",
     ".zsh": "bash",
     ".ksh": "bash",
+    ".go": "go",
 }
 
 _ANSIBLE_MARKERS = ("roles/", "playbooks/", "tasks/", "handlers/", "group_vars/", "host_vars/")
@@ -163,6 +164,8 @@ class PlannerAgent:
                 linter_set.add("black")
             elif lang == "bash":
                 linter_set.add("shellcheck")
+            elif lang == "go":
+                linter_set.add("govet")
 
         result.linters_to_run = sorted(linter_set)
         # +1 for the summary call

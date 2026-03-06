@@ -154,11 +154,10 @@ class CommentManager:
                     "body": body,
                 })
 
-        # Determine review event: REQUEST_CHANGES if error/warn, else COMMENT
-        has_blocking = any(
-            i.get("severity") in ("error", "warn") for i in issues
-        )
-        review_event = "REQUEST_CHANGES" if has_blocking else "APPROVE" if not issues else "COMMENT"
+        # Always use COMMENT — the AI reviewer provides advisory suggestions only.
+        # Developers should review findings and decide whether to act on them.
+        # Never use REQUEST_CHANGES or APPROVE to avoid blocking the PR workflow.
+        review_event = "COMMENT"
 
         # Post as a single review with all comments
         self._submit_review(comments, summary_markdown, review_event)
@@ -296,13 +295,13 @@ class CommentManager:
         parts = [
             f"{severity_emoji} **{severity}** | `{category}`",
             "",
-            f"**What's wrong:** {message}",
+            f"**Issue:** {message}",
         ]
         if suggestion:
-            parts.extend(["", f"**How to fix:** {suggestion}"])
+            parts.extend(["", f"**Suggested Fix:** {suggestion}"])
 
         h = issue_hash(issue)
-        parts.extend(["", f"---", f"*— {BOT_NAME}*", f"<!-- hash:{h} -->"])
+        parts.extend(["", f"---", f"*— {BOT_NAME} (advisory — please review and apply via your development workflow)*", f"<!-- hash:{h} -->"])
 
         return "\n".join(parts)
 
@@ -324,7 +323,7 @@ class CommentManager:
         # Hash the consolidated set
         combined = "|".join(issue_hash(n) for n in nits)
         h = hashlib.sha256(combined.encode()).hexdigest()[:16]
-        parts.extend(["", f"---", f"*— {BOT_NAME}*", f"<!-- hash:{h} -->"])
+        parts.extend(["", f"---", f"*— {BOT_NAME} (advisory — please review and apply via your development workflow)*", f"<!-- hash:{h} -->"])
 
         return "\n".join(parts)
 
